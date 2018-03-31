@@ -1,12 +1,10 @@
 #!/usr/bin/env python
 # encoding: utf-8
 
-import rosbag_pandas
-import matplotlib.pyplot as plt
-
+import argparse
 import os
 
-import argparse
+import rosbag_pandas
 
 
 def buildParser():
