@@ -1,17 +1,15 @@
 #!/usr/bin/env python
 
-import warnings
 import re
 import subprocess
-import types
-import yaml
+import warnings
 
-import pandas as pd
 import numpy as np
-
+import pandas as pd
 import rosbag
-import rospy
+import yaml
 from roslib.message import get_message_class
+from six import string_types
 
 
 def bag_to_dataframe(bag_name, include=None, exclude=None, parse_header=False, seconds=False):
@@ -45,7 +43,7 @@ def bag_to_dataframe(bag_name, include=None, exclude=None, parse_header=False, s
     # create datastore
     datastore = {}
     for topic in dmap.keys():
-        for f, key in dmap[topic].iteritems():
+        for f, key in dmap[topic].items():
             t = msg_type[topic][f]
             if isinstance(t, int) or isinstance(t, float):
                 arr = np.empty(length)
@@ -78,7 +76,7 @@ def bag_to_dataframe(bag_name, include=None, exclude=None, parse_header=False, s
             else:
                 index[idx] = mt.to_nsec()
         fields = dmap[topic]
-        for f, key in fields.iteritems():
+        for f, key in fields.items():
             try:
                 d = get_message_data(msg, f)
                 if isinstance(d, tuple):
@@ -142,7 +140,7 @@ def prune_topics(bag_topics, include, exclude):
     if include is None:
         for t in bag_topics:
             topics_to_use.add(t)
-    elif isinstance(include, basestring):
+    elif isinstance(include, string_types):
         check = re.compile(include)
         for t in bag_topics:
             if re.match(check, t) is not None:
@@ -163,7 +161,7 @@ def prune_topics(bag_topics, include, exclude):
     # now exclude the exclusions
     if exclude is None:
         pass
-    elif isinstance(exclude, basestring):
+    elif isinstance(exclude, string_types):
         check = re.compile(exclude)
         for t in list(topics_to_use):
             if re.match(check, t) is not None:
@@ -241,15 +239,15 @@ def get_base_fields(msg, prefix='', parse_header=True):
         if not parse_header and i == 'header':
             continue
         if hasattr(slot_msg, '__slots__'):
-                (subs, type_map) = get_base_fields(
-                    slot_msg, prefix=prefix + i + '.',
-                    parse_header=parse_header,
-                )
+            (subs, type_map) = get_base_fields(
+                slot_msg, prefix=prefix + i + '.',
+                parse_header=parse_header,
+            )
 
-                for i in subs:
-                    ret_val.append(i)
-                for k, v in type_map.items():
-                    msg_types[k] = v
+            for i in subs:
+                ret_val.append(i)
+            for k, v in type_map.items():
+                msg_types[k] = v
         else:
             ret_val.append(prefix + i)
             msg_types[prefix + i] = slot_msg
@@ -277,17 +275,17 @@ def get_key_name(name):
 
 def clean_for_export(df):
     new_df = pd.DataFrame()
-    for c, t in df.dtypes.iteritems():
+    for c, t in df.dtypes.items():
         if t.kind in 'OSUV':
             s = df[c].dropna().apply(func=str)
             s = s.str.replace('\n', '')
             s = s.str.replace('\r', '')
-            s = s.str.replace(',','\t')
+            s = s.str.replace(',', '\t')
             new_df[c] = s
         else:
             new_df[c] = df[c]
 
-    return new_df 
+    return new_df
 
 
 if __name__ == '__main__':
