@@ -8,16 +8,60 @@ import numpy as np
 import pandas as pd
 import rosbag
 import yaml
-from roslib.message import get_message_class
+from box import Box
 from six import string_types
 
 
-def bag_to_dataframe(bag_name, include=None, exclude=None, parse_header=False, seconds=False):
+def to_dict(obj):
+    if isinstance(obj, dict):
+        data = {}
+        for (k, v) in obj.items():
+            data[k] = to_dict(v)
+        return data
+    elif hasattr(obj, "_ast"):
+        return to_dict(obj._ast())
+    elif hasattr(obj, "__iter__"):
+        return [to_dict(v) for v in obj]
+    elif hasattr(obj, "__dict__"):
+        data = dict([(key, to_dict(value))
+                     for key, value in obj.__dict__.iteritems()
+                     if not callable(value) and not key.startswith('_')])
+        return data
+    else:
+        data = {}
+        for name in dir(obj):
+            if not name.startswith('_'):
+                value = getattr(obj, name)
+                if isinstance(value, (int, float, bool, str)):
+                    data[name] = value
+                elif not callable(value):
+                    data[name] = to_dict(value)
+        return data
+
+
+def flatten_dict(d):
+    def expand(key, value):
+        if isinstance(value, dict):
+            return [(key + '.' + k, v) for k, v in flatten_dict(value).items()]
+        elif isinstance(value, (tuple, list)):
+            parsed_collection = [("{0}[{1}]".format(key, idx), v) for idx, v in enumerate(value)]
+            return [(k + '.' + fk, fv) for k, v in parsed_collection for fk, fv in flatten_dict(v).items()]
+        else:
+            return [(key, value)]
+
+    items = [item for k, v in d.items() for item in expand(k, v)]
+    return dict(items)
+
+
+def bag_to_dataframe(bag_name, fields=None, include=None, exclude=None, seconds=False):
     '''
     Read in a rosbag file and create a pandas data frame that
     is indexed by the time the message was recorded in the bag.
 
     :bag_name: String name for the bag file
+    :fields: None, String  Fields to include in the dataframe
+               if None all topics added, if string it is used as regular
+                   expression.
     :include: None, String, or List  Topics to include in the dataframe
                if None all topics added, if string it is used as regular
                    expression, if list that list is used.
@@ -28,103 +72,86 @@ def bag_to_dataframe(bag_name, include=None, exclude=None, parse_header=False, s
 
     :seconds: time index is in seconds
 
-    :returns: a pandas dataframe object
+    :returns: a list of pandas dataframe objects
     '''
     # get list of topics to parse
     yaml_info = get_bag_info(bag_name)
     bag_topics = get_topics(yaml_info)
     bag_topics = prune_topics(bag_topics, include, exclude)
-    length = get_length(bag_topics, yaml_info)
-    msgs_to_read, msg_type = get_msg_info(yaml_info, bag_topics, parse_header)
-
     bag = rosbag.Bag(bag_name)
-    dmap = create_data_map(msgs_to_read)
 
-    # create datastore
+    # create datastore and index
     datastore = {}
-    for topic in dmap.keys():
-        for f, key in dmap[topic].items():
-            t = msg_type[topic][f]
-            if isinstance(t, int) or isinstance(t, float):
-                arr = np.empty(length)
-                arr.fill(np.NAN)
-            elif isinstance(t, list):
-                arr = np.empty(length)
-                arr.fill(np.NAN)
-                for i in range(len(t)):
-                    key_i = '{0}{1}'.format(key, i)
-                    datastore[key_i] = arr.copy()
-                continue
-            else:
-                arr = np.empty(length, dtype=np.object)
-            datastore[key] = arr
-
-    # create the index
-    index = np.empty(length)
-    index.fill(np.NAN)
+    index = {}
 
     # all of the data is loaded
-    for idx, (topic, msg, mt) in enumerate(bag.read_messages(topics=bag_topics)):
+    for topic, msg, mt in bag.read_messages(topics=bag_topics):
+        msg_as_dict = to_dict(msg)
+        parsed_msg = Box(msg_as_dict)
+        flatten_msg = flatten_dict(msg_as_dict)
+
+        time = -1
         try:
             if seconds:
-                index[idx] = msg.header.stamp.to_sec()
+                time = parsed_msg.header.stamp.secs
             else:
-                index[idx] = msg.header.stamp.to_nsec()
+                time = parsed_msg.header.stamp.nsecs
         except:
             if seconds:
-                index[idx] = mt.to_sec()
+                time = mt.to_sec()
             else:
-                index[idx] = mt.to_nsec()
-        fields = dmap[topic]
-        for f, key in fields.items():
-            try:
-                d = get_message_data(msg, f)
-                if isinstance(d, tuple):
-                    for i, val in enumerate(d):
-                        key_i = '{0}{1}'.format(key, i)
-                        datastore[key_i][idx] = val
-                else:
-                    datastore[key][idx] = d
-            except:
-                pass
+                time = mt.to_nsec()
+
+        for k, v in flatten_msg.items():
+            if not isinstance(v, (int, float)):
+                continue
+
+            final_key = get_key_name(topic, k)
+            if not valid_field(final_key, fields):
+                continue
+
+            if topic not in datastore:
+                datastore[topic] = {}
+            if final_key not in datastore[topic]:
+                datastore[topic][final_key] = []
+
+            datastore[topic][final_key].append(v)
+
+        if topic not in index:
+            index[topic] = []
+
+        index[topic].append(time)
 
     bag.close()
 
-    # convert the index
-    if not seconds:
-        index = pd.to_datetime(index, unit='ns')
+    dataframes = []
+    for topic, fields in datastore.items():
+        data_result = {}
+        index_result = index[topic]
+
+        # convert the index
+        if not seconds:
+            index_result = pd.to_datetime(index_result, unit='ns')
+
+        for field_name, field_value in fields.items():
+            data_result[field_name] = np.array(field_value)
+
+        dataframes.append(pd.DataFrame(data=data_result, index=index_result))
 
     # now we have read all of the messages its time to assemble the dataframe
-    return pd.DataFrame(data=datastore, index=index)
+    return dataframes
 
 
-def get_length(topics, yaml_info):
-    '''
-    Find the length (# of rows) in the created dataframe
-    '''
-    total = 0
-    info = yaml_info['topics']
-    for topic in topics:
-        for t in info:
-            if t['topic'] == topic:
-                total = total + t['messages']
-                break
-    return total
+def valid_field(input_field, valid_fields):
+    if valid_fields is None:
+        return True
 
+    for pattern in valid_fields:
+        check = re.compile(pattern)
+        if re.match(check, input_field) is not None:
+            return True
 
-def create_data_map(msgs_to_read):
-    '''
-    Create a data map for usage when parsing the bag
-    '''
-    dmap = {}
-    for topic in msgs_to_read.keys():
-        base_name = get_key_name(topic) + '__'
-        fields = {}
-        for f in msgs_to_read[topic]:
-            key = (base_name + f).replace('.', '_')
-            fields[f] = key
-        dmap[topic] = fields
-    return dmap
+    return False
 
 
 def prune_topics(bag_topics, include, exclude):
@@ -177,33 +204,6 @@ def prune_topics(bag_topics, include, exclude):
     return list(topics_to_use)
 
 
-def get_msg_info(yaml_info, topics, parse_header=True):
-    '''
-    Get info from all of the messages about what they contain
-    and will be added to the dataframe
-    '''
-    topic_info = yaml_info['topics']
-    msgs = {}
-    classes = {}
-
-    for topic in topics:
-        base_key = get_key_name(topic)
-        msg_paths = []
-        msg_types = {}
-        for info in topic_info:
-            if info['topic'] == topic:
-                msg_class = get_message_class(info['type'])
-                if msg_class is None:
-                    warnings.warn(
-                        'Could not find types for ' + topic + ' skpping ')
-                else:
-                    (msg_paths, msg_types) = get_base_fields(msg_class(), "",
-                                                             parse_header)
-                msgs[topic] = msg_paths
-                classes[topic] = msg_types
-    return (msgs, classes)
-
-
 def get_bag_info(bag_file):
     '''Get uamle dict of the bag information
     by calling the subprocess -- used to create correct sized
@@ -229,63 +229,9 @@ def get_topics(yaml_info):
     return names
 
 
-def get_base_fields(msg, prefix='', parse_header=True):
-    '''function to get the full names of every message field in the message'''
-    slots = msg.__slots__
-    ret_val = []
-    msg_types = dict()
-    for i in slots:
-        slot_msg = getattr(msg, i)
-        if not parse_header and i == 'header':
-            continue
-        if hasattr(slot_msg, '__slots__'):
-            (subs, type_map) = get_base_fields(
-                slot_msg, prefix=prefix + i + '.',
-                parse_header=parse_header,
-            )
-
-            for i in subs:
-                ret_val.append(i)
-            for k, v in type_map.items():
-                msg_types[k] = v
-        else:
-            ret_val.append(prefix + i)
-            msg_types[prefix + i] = slot_msg
-    return (ret_val, msg_types)
-
-
-def get_message_data(msg, key):
-    '''get the datapoint from the dot delimited message field key
-    e.g. translation.x looks up translation than x and returns the value found
-    in x'''
-    data = msg
-    paths = key.split('.')
-    for i in paths:
-        data = getattr(data, i)
-    return data
-
-
-def get_key_name(name):
+def get_key_name(topic, path):
     '''fix up topic to key names to make them a little prettier'''
-    if name[0] == '/':
-        name = name[1:]
-    name = name.replace('/', '.')
-    return name
-
-
-def clean_for_export(df):
-    new_df = pd.DataFrame()
-    for c, t in df.dtypes.items():
-        if t.kind in 'OSUV':
-            s = df[c].dropna().apply(func=str)
-            s = s.str.replace('\n', '')
-            s = s.str.replace('\r', '')
-            s = s.str.replace(',', '\t')
-            new_df[c] = s
-        else:
-            new_df[c] = df[c]
-
-    return new_df
+    return "{0}/{1}".format(topic, path.replace(".", "/"))
 
 
 if __name__ == '__main__':
