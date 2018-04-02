@@ -14,17 +14,17 @@ def buildParser():
 
     parser = argparse.ArgumentParser(
         description='Script to parse bagfile to json file')
-    parser.add_argument('bag', help='Bag file to read',
-                        type=str)
+    parser.add_argument('-b', '--bag', help='Bag file to read',
+                        required=True, type=str)
     parser.add_argument('-i', '--include',
                         help='list or regex for topics to include',
-                        nargs='*')
+                        required=False, nargs='*')
     parser.add_argument('-e', '--exclude',
                         help='list or regex for topics to exclude',
-                        nargs='*')
+                        required=False, nargs='*')
     parser.add_argument('-o', '--output',
                         help='name of the output file',
-                        nargs='*')
+                        required=True, nargs='*')
     return parser
 
 
