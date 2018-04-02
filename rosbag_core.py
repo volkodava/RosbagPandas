@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# encoding: utf-8
 import json
 import re
 import subprocess
@@ -34,7 +35,10 @@ def bag_to_json(bag_name, include=None, exclude=None):
     try:
         bag = rosbag.Bag(bag_name)
         for topic, msg, mt in bag.read_messages(topics=bag_topics):
-            datastore[topic] = {"data": to_dict(msg), "secs": mt.to_sec(), "nsecs": mt.to_nsec()}
+            if topic not in datastore:
+                datastore[topic] = []
+
+            datastore[topic].append({"data": to_dict(msg), "secs": mt.to_sec(), "nsecs": mt.to_nsec()})
     finally:
         if bag:
             bag.close()
