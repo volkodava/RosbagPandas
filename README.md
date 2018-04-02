@@ -1,4 +1,4 @@
 RosbagPandas
 ==========
 
-Rosbag Pandas package.  Contains code to create Python pandas data frame from a ros bag file.
+Contains code to create JSON file from a ros bag file.

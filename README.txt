@@ -7,9 +7,9 @@ into a Pandas Dataframe object for data viewing
 and manipulation. Usage is similar to the following:
 
     #!/usr/bin.env python
-    import rosbag_pandas
+    import rosbag_core
 
-    dataframe = rosbag_pandas.bag_to_dataframe('file.bag')
+    json = rosbag_core.bag_to_json('file.bag')
     #awesome data processing
 
 
@@ -20,8 +20,6 @@ parameters to limit the topics read into the dataframe.
 Examples include using a regular expression to filter or add topics
 as well as filtering or adding from a list.
 
-Also installs two scripts:
+Also installs:
 
-bag_graph.py which allows a user to produce a quick graph of data in a bag file.
-
-bag2csv.py allows a user to quickly convert data in a rosbag into csv format.
+bag2json.py script, which allows a user to quickly convert data in a rosbag into json format.

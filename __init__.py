@@ -1,2 +1,2 @@
 # Emtpy import
-from .rosbag_pandas import *
+from .rosbag_core import *
