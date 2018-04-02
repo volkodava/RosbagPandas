@@ -4,12 +4,37 @@ import re
 import subprocess
 import warnings
 
+import jmespath
 import numpy as np
 import pandas as pd
 import rosbag
 import yaml
-from box import Box
 from six import string_types
+
+
+class DataframeResult:
+    def __init__(self, title, data, index):
+        self.title = title
+        self.data = np.array(data)
+        self.index = np.array(index)
+        self.index = self.index - self.index.min()
+
+    def getDataFrame(self, start_time=None, stop_time=-1):
+        data = None
+        index = None
+        if start_time is None:
+            data = np.array(self.data)
+            index = np.array(self.index)
+        else:
+            time_idx_start = self.find_nearest_index(self.index, start_time)
+            time_idx_stop = self.find_nearest_index(self.index, stop_time)
+            data = np.array(self.data[time_idx_start:time_idx_stop])
+            index = np.arange(data.size)
+
+        return pd.DataFrame(data=data, index=index)
+
+    def find_nearest_index(self, arr, value):
+        return (np.abs(arr - value)).argmin()
 
 
 def to_dict(obj):
@@ -53,15 +78,14 @@ def flatten_dict(d):
     return dict(items)
 
 
-def bag_to_dataframe(bag_name, fields=None, include=None, exclude=None, seconds=False):
+def bag_to_dataframe(bag_name, mapping_rules, include=None, exclude=None, seconds=False):
     '''
     Read in a rosbag file and create a pandas data frame that
     is indexed by the time the message was recorded in the bag.
 
     :bag_name: String name for the bag file
-    :fields: None, String  Fields to include in the dataframe
-               if None all topics added, if string it is used as regular
-                   expression.
+    :mapping_rules: Dict  Defines mapping rules to extract information
+               from the message, where key - field path, value - JMESPath expression.
     :include: None, String, or List  Topics to include in the dataframe
                if None all topics added, if string it is used as regular
                    expression, if list that list is used.
@@ -72,7 +96,7 @@ def bag_to_dataframe(bag_name, fields=None, include=None, exclude=None, seconds=
 
     :seconds: time index is in seconds
 
-    :returns: a list of pandas dataframe objects
+    :returns: a list of dataframe results
     '''
     # get list of topics to parse
     yaml_info = get_bag_info(bag_name)
@@ -87,59 +111,49 @@ def bag_to_dataframe(bag_name, fields=None, include=None, exclude=None, seconds=
     # all of the data is loaded
     for topic, msg, mt in bag.read_messages(topics=bag_topics):
         msg_as_dict = to_dict(msg)
-        parsed_msg = Box(msg_as_dict)
-        flatten_msg = flatten_dict(msg_as_dict)
+        data_result = extract_data(msg_as_dict, mapping_rules, topic, mt)
 
-        time = -1
-        try:
+        for field_path, field_value in data_result["data"].items():
+            if field_path not in datastore:
+                datastore[field_path] = []
+            if field_path not in index:
+                index[field_path] = []
+
+            datastore[field_path].append(field_value)
             if seconds:
-                time = parsed_msg.header.stamp.secs
+                index[field_path].append(data_result["secs"])
             else:
-                time = parsed_msg.header.stamp.nsecs
-        except:
-            if seconds:
-                time = mt.to_sec()
-            else:
-                time = mt.to_nsec()
-
-        for k, v in flatten_msg.items():
-            if not isinstance(v, (int, float)):
-                continue
-
-            final_key = get_key_name(topic, k)
-            if not valid_field(final_key, fields):
-                continue
-
-            if topic not in datastore:
-                datastore[topic] = {}
-            if final_key not in datastore[topic]:
-                datastore[topic][final_key] = []
-
-            datastore[topic][final_key].append(v)
-
-        if topic not in index:
-            index[topic] = []
-
-        index[topic].append(time)
+                index[field_path].append(data_result["nsecs"])
 
     bag.close()
 
     dataframes = []
-    for topic, fields in datastore.items():
-        data_result = {}
-        index_result = index[topic]
+    for field_path, values in datastore.items():
+        data_result = values
+        index_result = index[field_path]
 
         # convert the index
         if not seconds:
             index_result = pd.to_datetime(index_result, unit='ns')
 
-        for field_name, field_value in fields.items():
-            data_result[field_name] = np.array(field_value)
-
-        dataframes.append(pd.DataFrame(data=data_result, index=index_result))
+        dataframes.append(DataframeResult(field_path, data_result, index_result))
 
     # now we have read all of the messages its time to assemble the dataframe
-    return dataframes
+    return sorted(dataframes, key=lambda x: x.title)
+
+
+def extract_data(msg_as_dict, mapping_rules, topic, mt):
+    if not mapping_rules:
+        return None
+
+    data = {}
+    for field_path, jmes_path in mapping_rules.items():
+        if field_path.startswith(topic):
+            search_results = jmespath.search(jmes_path, msg_as_dict)
+            if isinstance(search_results, (int, float)) or search_results:
+                data[field_path] = search_results
+
+    return {"data": data, "secs": mt.to_sec(), "nsecs": mt.to_nsec()}
 
 
 def valid_field(input_field, valid_fields):
@@ -228,10 +242,6 @@ def get_topics(yaml_info):
 
     return names
 
-
-def get_key_name(topic, path):
-    '''fix up topic to key names to make them a little prettier'''
-    return "{0}/{1}".format(topic, path.replace(".", "/"))
 
 
 if __name__ == '__main__':
