@@ -24,7 +24,7 @@ def buildParser():
                         required=False, nargs='*')
     parser.add_argument('-o', '--output',
                         help='name of the output file',
-                        required=True, nargs='*')
+                        required=True)
     return parser
 
 
