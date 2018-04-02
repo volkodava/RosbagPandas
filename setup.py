@@ -6,7 +6,7 @@ setup(name='rosbag_core',
       author_email='aktaylor08@gmail.com',
       description='Create a Python pandas data frame from a ros bag file',
       py_modules=['rosbag_core'],
-      scripts=['scripts/bag2json.py'],
+      scripts=['bag2json.py'],
       keywords=['ROS', 'rosbag', 'json'],
       url='https://github.com/aktaylor08/RosbagPandas',
       )

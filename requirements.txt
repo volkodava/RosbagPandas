@@ -1,3 +1,4 @@
 catkin-pkg==0.4.1
 PyYAML==3.12
 rosbag==1.12.13
+rospkg==1.1.4

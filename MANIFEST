@@ -4,4 +4,4 @@ LICENSE.txt
 README.txt
 rosbag_core.py
 setup.py
-scripts/bag2json.py
+bag2json.py
